@@ -50,7 +50,7 @@ const StockTable = ({ stocks, type, isHistorical }) => {
               <th className="px-6 py-4 w-32">代码/名称</th>
               <th className="px-6 py-4 w-24">市场</th>
               <th className="px-6 py-4 w-32">赛道细分</th>
-              <th className="px-6 py-4 w-28 text-right">{isHistorical ? '收盘价' : '最新价'}</th>
+              <th className="px-6 py-4 w-28 text-right">{isHistorical ? '当日收盘' : '最新价'}</th>
               <th className="px-6 py-4 w-28 text-right">当日涨跌</th>
               <th className="px-6 py-4">{isHistorical ? '数据状态' : 'Google News 实时热点'}</th>
             </tr>
@@ -66,14 +66,16 @@ const StockTable = ({ stocks, type, isHistorical }) => {
                 </td>
                 <td className="px-6 py-4"><Badge type={stock.market}>{stock.market}</Badge></td>
                 <td className="px-6 py-4"><span className="text-xs text-gray-300 bg-gray-700/50 px-2 py-1 rounded border border-gray-600">{stock.subSector}</span></td>
-                <td className="px-6 py-4 text-right font-mono text-white font-medium">{stock.error ? <span className="text-red-500">Error</span> : stock.currentPrice}</td>
+                <td className="px-6 py-4 text-right font-mono text-white font-medium">
+                    {stock.error ? <span className="text-red-500 text-xs">缺失</span> : stock.currentPrice}
+                </td>
                 <td className={`px-6 py-4 text-right font-mono font-bold ${stock.changePercent >= 0 ? 'text-red-400' : 'text-green-400'}`}>
                   {stock.changePercent >= 0 ? '+' : ''}{stock.changePercent.toFixed(2)}%
                 </td>
                 <td className="px-6 py-4 align-top">
                   {isHistorical ? (
                     <div className="text-xs text-gray-400 italic leading-relaxed">
-                      {stock.historicalNote || (stock.error ? "当日无交易数据。" : "数据来源: 新浪财经 K 线。")}
+                      {stock.historicalNote || (stock.error ? "当日无有效交易记录。" : "数据同步自新浪财经。")}
                     </div>
                   ) : (
                     stock.news && stock.news.link !== "#" ? (
@@ -112,8 +114,13 @@ export default function App() {
 
   // 核心数据获取逻辑
   const fetchStockData = useCallback(async (targetDate = "") => {
-    // 切换日期或启动时显示全屏加载
-    if (stocks.length === 0 || targetDate !== "") setLoading(true);
+    // 关键点：如果是回溯模式，发起请求前立即清空旧列表，防止数据显示冲突
+    if (targetDate !== "") {
+        setStocks([]);
+        setLoading(true);
+    } else if (stocks.length === 0) {
+        setLoading(true);
+    }
     
     try {
       const url = targetDate ? `${API_BASE_URL}/api/stocks?date=${targetDate}` : `${API_BASE_URL}/api/stocks`;
@@ -125,11 +132,14 @@ export default function App() {
         setStocks(data);
         setLastUpdated(new Date());
         setError(null);
+      } else {
+        throw new Error("返回数据格式错误");
       }
     } catch (err) {
       console.error("Fetch Error:", err);
       if (targetDate) {
-        setError(`未找到 ${targetDate} 的有效数据。请尝试其他交易日。`);
+        setError(`未找到 ${targetDate} 的有效数据。可能该日为非交易日或接口维护中。`);
+        setStocks([]); // 确保出错后不显示旧数据
       } else if (stocks.length === 0) {
         setError("连接后端服务失败，请检查后端运行状态。");
       }
@@ -143,13 +153,14 @@ export default function App() {
     document.title = "ai-stock-tracker";
     
     if (isHistoricalMode) {
-      // 历史模式：仅抓取一次，不设置定时器
+      // 历史模式：仅抓取选定日期数据一次
       fetchStockData(selectedDate);
     } else {
-      // 实时模式：初始抓取 + 定时器
+      // 实时模式：执行初始抓取并启动 30 秒轮询定时器
       fetchStockData();
       const intervalId = setInterval(() => fetchStockData(), 30000);
-      return () => clearInterval(intervalId); // 切换模式时自动销毁
+      // 清理函数：确保在选择日期或组件卸载时物理停止定时器
+      return () => clearInterval(intervalId);
     }
   }, [selectedDate, isHistoricalMode, fetchStockData]);
 
@@ -158,7 +169,8 @@ export default function App() {
     const calc = (filterFn) => {
       const f = stocks.filter(filterFn).filter(s => !s.error);
       if (f.length === 0) return { val: 1000, change: 0 };
-      const avg = f.reduce((acc, s) => acc + s.changePercent, 0) / f.length;
+      const totalChange = f.reduce((acc, s) => acc + (s.changePercent || 0), 0);
+      const avg = totalChange / f.length;
       return { val: (1000 * (1 + avg/100)).toFixed(1), change: avg.toFixed(2) };
     };
     return { hardware: calc(s => s.sector === 'hardware'), application: calc(s => s.sector === 'application') };
@@ -201,7 +213,7 @@ export default function App() {
           <div className="flex items-center gap-2 bg-gray-800 p-1 rounded-lg border border-gray-700 cursor-pointer hover:border-blue-500/50 transition-all group" onClick={() => dateInputRef.current?.showPicker()}>
             <Calendar size={14} className="ml-2 text-blue-400 group-hover:scale-110 transition-transform" />
             <input ref={dateInputRef} type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} max={new Date().toISOString().split("T")[0]} className="bg-gray-900 text-gray-200 text-xs p-1.5 rounded focus:outline-none cursor-pointer" onClick={(e) => e.stopPropagation()} />
-            {isHistoricalMode && <button onClick={(e) => { e.stopPropagation(); setSelectedDate(""); }} className="bg-blue-600 hover:bg-blue-500 px-3 py-1.5 text-xs rounded shadow-lg transition-colors">实时</button>}
+            {isHistoricalMode && <button onClick={(e) => { e.stopPropagation(); setSelectedDate(""); }} className="bg-blue-600 hover:bg-blue-500 px-3 py-1.5 text-xs rounded shadow-lg transition-colors">切回实时</button>}
           </div>
 
           <div className="bg-gray-800 px-4 py-2 rounded-full border border-gray-700 flex items-center gap-3 shadow-inner">
@@ -211,6 +223,15 @@ export default function App() {
           </div>
         </div>
       </div>
+
+      {/* 错误提示条 */}
+      {error && isHistoricalMode && (
+          <div className="mb-6 bg-red-900/20 border border-red-800/40 p-4 rounded-xl text-red-400 text-sm flex items-center gap-3">
+              <AlertCircle size={18} />
+              <span>{error}</span>
+              <button onClick={() => setSelectedDate("")} className="ml-auto underline font-medium">切回实时模式</button>
+          </div>
+      )}
 
       {/* 历史复盘提示卡 */}
       {isHistoricalMode && !error && (
