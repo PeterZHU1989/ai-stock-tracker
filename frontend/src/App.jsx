@@ -1,9 +1,8 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { Monitor, Cpu, TrendingUp, TrendingDown, Globe, Activity, RefreshCw, Smartphone, Zap, Server, Loader, AlertCircle, Newspaper, ExternalLink, Calendar, History, Play } from 'lucide-react';
+import { Monitor, Cpu, TrendingUp, TrendingDown, Globe, Activity, RefreshCw, Smartphone, Zap, Server, Loader, AlertCircle, Newspaper, ExternalLink, Calendar, History, Play, Terminal } from 'lucide-react';
 
 /**
  * --- API 地址配置 ---
- * 确保在 Vercel 生产环境下使用环境变量，本地开发则回退到 localhost
  */
 const getApiBaseUrl = () => {
   try {
@@ -52,7 +51,7 @@ const StockTable = ({ stocks, type, isHistorical }) => {
               <th className="px-6 py-4 w-32">赛道细分</th>
               <th className="px-6 py-4 w-28 text-right">{isHistorical ? '当日收盘' : '最新价'}</th>
               <th className="px-6 py-4 w-28 text-right">当日涨跌</th>
-              <th className="px-6 py-4">{isHistorical ? '数据状态' : 'Google News 实时热点'}</th>
+              <th className="px-6 py-4">{isHistorical ? '历史注记' : 'Google News 实时热点'}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-700">
@@ -67,15 +66,15 @@ const StockTable = ({ stocks, type, isHistorical }) => {
                 <td className="px-6 py-4"><Badge type={stock.market}>{stock.market}</Badge></td>
                 <td className="px-6 py-4"><span className="text-xs text-gray-300 bg-gray-700/50 px-2 py-1 rounded border border-gray-600">{stock.subSector}</span></td>
                 <td className="px-6 py-4 text-right font-mono text-white font-medium">
-                    {stock.error ? <span className="text-red-500 text-xs">缺失</span> : stock.currentPrice}
+                    {stock.error ? <span className="text-red-500 text-xs italic">数据缺失</span> : stock.currentPrice}
                 </td>
                 <td className={`px-6 py-4 text-right font-mono font-bold ${stock.changePercent >= 0 ? 'text-red-400' : 'text-green-400'}`}>
                   {stock.changePercent >= 0 ? '+' : ''}{stock.changePercent.toFixed(2)}%
                 </td>
                 <td className="px-6 py-4 align-top">
                   {isHistorical ? (
-                    <div className="text-xs text-gray-400 italic leading-relaxed">
-                      {stock.historicalNote || (stock.error ? "当日无有效交易记录。" : "数据同步自新浪财经。")}
+                    <div className="text-xs text-gray-400 leading-relaxed">
+                      {stock.historicalNote || (stock.error ? "该标的在此日期无交易记录。" : "数据源: 新浪财经 K 线。")}
                     </div>
                   ) : (
                     stock.news && stock.news.link !== "#" ? (
@@ -109,15 +108,16 @@ export default function App() {
   const [lastUpdated, setLastUpdated] = useState(null);
   const dateInputRef = useRef(null);
 
-  // 派生状态：是否处于历史模式
+  // 派生状态
   const isHistoricalMode = useMemo(() => selectedDate !== "", [selectedDate]);
 
-  // 核心数据获取逻辑
+  // 获取数据的函数：增加了 AbortController 防止旧请求覆盖新请求
   const fetchStockData = useCallback(async (targetDate = "") => {
-    // 关键点：如果是回溯模式，发起请求前立即清空旧列表，防止数据显示冲突
+    // 每次发起新日期请求时，物理重置所有状态
     if (targetDate !== "") {
         setStocks([]);
         setLoading(true);
+        setError(null);
     } else if (stocks.length === 0) {
         setLoading(true);
     }
@@ -127,11 +127,12 @@ export default function App() {
 
     try {
       const url = targetDate ? `${API_BASE_URL}/api/stocks?date=${targetDate}` : `${API_BASE_URL}/api/stocks`;
+      
       const response = await fetch(url, { signal: controller.signal });
       
       if (!response.ok) {
-         const errBody = await response.json().catch(() => ({}));
-         throw new Error(errBody.detail || `服务器返回错误 (${response.status})`);
+         const errData = await response.json().catch(() => ({}));
+         throw new Error(errData.detail || `HTTP ${response.status}: 后端数据提取失败`);
       }
 
       const data = await response.json();
@@ -141,15 +142,15 @@ export default function App() {
         setLastUpdated(new Date());
         setError(null);
       } else {
-        throw new Error("返回的数据格式不符合预期");
+        throw new Error("后端返回格式异常，请检查后端解析逻辑");
       }
     } catch (err) {
       console.error("Fetch Error:", err);
       if (targetDate) {
-        setError(`未找到 ${targetDate} 的有效数据。可能该日为非交易日、数据尚未同步或后端接口异常。`);
+        setError(`回溯失败: 选定日期 (${targetDate}) 的 K 线解析异常。这通常是因为新浪接口格式变动或该日休市。`);
         setStocks([]); 
       } else if (stocks.length === 0) {
-        setError("连接后端服务失败，请检查后端运行状态及网络连接。");
+        setError("连接后端服务失败，请检查 Render 部署状态。");
       }
     } finally {
       setLoading(false);
@@ -157,29 +158,26 @@ export default function App() {
     }
   }, [stocks.length]);
 
-  // 模式与刷新控制
+  // 监听日期变化
   useEffect(() => {
     document.title = "ai-stock-tracker";
     
     if (isHistoricalMode) {
-      // 历史模式：执行抓取逻辑，并确保清理掉所有定时刷新
       fetchStockData(selectedDate);
-      return () => {}; 
+      return () => {}; // 历史模式下不设置定时器
     } else {
-      // 实时模式：执行初始抓取并启动 30 秒轮询定时器
       fetchStockData();
       const intervalId = setInterval(() => fetchStockData(), 30000);
-      // 清理函数：确保在选择日期或组件卸载时物理停止定时器
       return () => clearInterval(intervalId);
     }
   }, [selectedDate, isHistoricalMode, fetchStockData]);
 
-  // 计算板块指数
+  // 板块指数计算逻辑改进：增加容错
   const marketStats = useMemo(() => {
     const calc = (filterFn) => {
-      const f = stocks.filter(filterFn).filter(s => !s.error);
+      const f = stocks.filter(filterFn).filter(s => !s.error && typeof s.changePercent === 'number');
       if (f.length === 0) return { val: 1000, change: 0 };
-      const totalChange = f.reduce((acc, s) => acc + (s.changePercent || 0), 0);
+      const totalChange = f.reduce((acc, s) => acc + s.changePercent, 0);
       const avg = totalChange / f.length;
       return { val: (1000 * (1 + avg/100)).toFixed(1), change: avg.toFixed(2) };
     };
@@ -190,40 +188,40 @@ export default function App() {
   const applicationStocks = stocks.filter(s => s.sector === 'application' && (activeTab === 'ALL' || s.market === activeTab));
 
   const getSentiment = () => {
-    if (loading && stocks.length === 0) return "同步市场快照中...";
-    if (error) return "数据获取遇到障碍";
+    if (loading && stocks.length === 0) return "正在从新浪云端节点同步...";
+    if (error) return "数据源解析中断";
 
     const prefix = isHistoricalMode ? `📅 ${selectedDate} 复盘：` : "🚀 实时播报：";
     const hChange = parseFloat(marketStats.hardware.change);
     const aChange = parseFloat(marketStats.application.change);
     
     let analysis = "";
-    if (hChange > 0.5 && aChange > 0.5) analysis = "多头火热，全线爆发。";
-    else if (hChange < -0.5 && aChange < -0.5) analysis = "避险浓厚，集体回调。";
-    else if (hChange > 0.5) analysis = "硬强软弱，资金聚焦算力。";
-    else if (aChange > 0.5) analysis = "软强硬弱，应用端反弹。";
-    else analysis = "窄幅震荡博弈中。";
+    if (hChange > 0.5 && aChange > 0.5) analysis = "多头共振，AI 全线大涨。";
+    else if (hChange < -0.5 && aChange < -0.5) analysis = "避险情绪，产业链集体回调。";
+    else if (hChange > 0.5) analysis = "硬强软弱，资金抱团算力龙头。";
+    else if (aChange > 0.5) analysis = "软强硬弱，应用端人气回升。";
+    else analysis = "窄幅震荡，寻找支撑位。";
 
     return `${prefix}${analysis}`;
   };
 
   return (
     <div className="min-h-screen bg-gray-900 text-gray-100 font-sans p-4 md:p-8">
-      {/* Header 工具栏 */}
+      {/* 顶部 Header */}
       <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
         <div>
           <h1 className="text-2xl md:text-3xl font-bold flex items-center gap-3 text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-400">
             <Globe className="text-blue-400" /> AI 股市追踪系统
           </h1>
-          <p className="text-gray-400 text-sm mt-1">{isHistoricalMode ? `正在回溯历史: ${selectedDate}` : '全球 AI 产业链核心个股实时监控'}</p>
+          <p className="text-gray-400 text-sm mt-1">{isHistoricalMode ? `复盘历史日期: ${selectedDate}` : '全球 AI 产业链 24/7 实时监控'}</p>
         </div>
         
         <div className="flex items-center gap-3">
-          {/* 交互日期选择器 */}
+          {/* 日期选择器容器 */}
           <div className="flex items-center gap-2 bg-gray-800 p-1 rounded-lg border border-gray-700 cursor-pointer hover:border-blue-500/50 transition-all group" onClick={() => dateInputRef.current?.showPicker()}>
             <Calendar size={14} className="ml-2 text-blue-400 group-hover:scale-110 transition-transform" />
             <input ref={dateInputRef} type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} max={new Date().toISOString().split("T")[0]} className="bg-gray-900 text-gray-200 text-xs p-1.5 rounded focus:outline-none cursor-pointer" onClick={(e) => e.stopPropagation()} />
-            {isHistoricalMode && <button onClick={(e) => { e.stopPropagation(); setSelectedDate(""); }} className="bg-blue-600 hover:bg-blue-500 px-3 py-1.5 text-xs rounded shadow-lg transition-colors">切回实时</button>}
+            {isHistoricalMode && <button onClick={(e) => { e.stopPropagation(); setSelectedDate(""); }} className="bg-blue-600 hover:bg-blue-500 px-3 py-1.5 text-xs rounded shadow-lg transition-all active:scale-95">返回实时</button>}
           </div>
 
           <div className="bg-gray-800 px-4 py-2 rounded-full border border-gray-700 flex items-center gap-3 shadow-inner">
@@ -234,28 +232,31 @@ export default function App() {
         </div>
       </div>
 
-      {/* 错误提示条：增强交互，允许快速恢复 */}
+      {/* 增强型错误提示：增加技术诊断信息 */}
       {error && isHistoricalMode && (
-          <div className="mb-6 bg-red-900/20 border border-red-800/40 p-4 rounded-xl text-red-400 text-sm flex items-center gap-3 animate-pulse">
+          <div className="mb-6 bg-red-900/20 border border-red-800/40 p-4 rounded-xl text-red-400 text-sm flex items-center gap-3 animate-in slide-in-from-top duration-300">
               <AlertCircle size={18} className="flex-shrink-0" />
-              <span>{error}</span>
-              <button onClick={() => setSelectedDate("")} className="ml-auto bg-red-500/20 px-3 py-1 rounded border border-red-500/50 hover:bg-red-500/40 transition-all font-medium whitespace-nowrap">重试实时模式</button>
+              <div className="flex flex-col">
+                <span className="font-bold">数据同步异常</span>
+                <span className="opacity-80 text-xs">{error}</span>
+              </div>
+              <button onClick={() => setSelectedDate("")} className="ml-auto bg-red-500/20 px-3 py-1 rounded border border-red-500/50 hover:bg-red-500/40 transition-all text-xs font-medium whitespace-nowrap">重试实时模式</button>
           </div>
       )}
 
-      {/* 历史复盘提示卡 */}
+      {/* 模式提醒卡片 */}
       {isHistoricalMode && !error && (
         <div className="mb-6 bg-amber-900/20 border border-amber-800/40 p-4 rounded-xl text-amber-200 text-sm flex items-center gap-3 animate-fade-in shadow-xl">
           <History className="text-amber-500 flex-shrink-0" />
-          <span>您正处于<strong>新浪财经 K 线回溯模式</strong>。当前显示为所选日期的收盘数据快照。</span>
+          <span>您正处于 <strong>Sina K-Line</strong> 离线复盘模式。所有价格均为该日收盘最终值。</span>
         </div>
       )}
 
-      {/* 核心看板 */}
+      {/* 板块指数看板 */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
         <div className="bg-gray-800 p-5 rounded-xl border border-gray-700 relative overflow-hidden group">
           <div className="absolute -right-4 -bottom-4 opacity-5 group-hover:opacity-10 transition-opacity"><Cpu size={120} /></div>
-          <div className="text-gray-400 text-sm mb-1 flex items-center gap-2"><Cpu size={14} className="text-cyan-400" />硬件指数</div>
+          <div className="text-gray-400 text-sm mb-1 flex items-center gap-2"><Cpu size={14} className="text-cyan-400" />硬件指数基准</div>
           <div className="flex items-baseline gap-3 relative z-10">
             <span className="text-3xl font-bold">{marketStats.hardware.val}</span>
             <span className={`text-lg font-bold ${marketStats.hardware.change >= 0 ? 'text-red-400' : 'text-green-400'}`}>{marketStats.hardware.change >= 0 ? '↑' : '↓'}{marketStats.hardware.change}%</span>
@@ -264,7 +265,7 @@ export default function App() {
 
         <div className="bg-gray-800 p-5 rounded-xl border border-gray-700 relative overflow-hidden group">
           <div className="absolute -right-4 -bottom-4 opacity-5 group-hover:opacity-10 transition-opacity"><Smartphone size={120} /></div>
-          <div className="text-gray-400 text-sm mb-1 flex items-center gap-2"><Zap size={14} className="text-orange-400" />应用指数</div>
+          <div className="text-gray-400 text-sm mb-1 flex items-center gap-2"><Zap size={14} className="text-orange-400" />应用指数基准</div>
           <div className="flex items-baseline gap-3 relative z-10">
             <span className="text-3xl font-bold">{marketStats.application.val}</span>
             <span className={`text-lg font-bold ${marketStats.application.change >= 0 ? 'text-red-400' : 'text-green-400'}`}>{marketStats.application.change >= 0 ? '↑' : '↓'}{marketStats.application.change}%</span>
@@ -272,16 +273,16 @@ export default function App() {
         </div>
 
         <div className={`p-5 rounded-xl border border-gray-700 transition-all duration-500 bg-gradient-to-br shadow-lg ${isHistoricalMode ? 'from-amber-900/40 to-gray-800 border-amber-700/50' : 'from-indigo-900 to-gray-800 border-indigo-700/50'}`}>
-          <div className="text-indigo-200 text-sm mb-2 font-medium flex items-center gap-2"><Activity size={16} />{isHistoricalMode ? '历史复盘总结' : '今日行情风向标'}</div>
+          <div className="text-indigo-200 text-sm mb-2 font-medium flex items-center gap-2"><Activity size={16} />{isHistoricalMode ? '历史复盘洞察' : '今日行情风向标'}</div>
           <p className="text-sm text-gray-200 leading-relaxed font-medium">{getSentiment()}</p>
           <div className="mt-3 flex gap-2">
-            <span className="bg-black/30 px-2 py-0.5 rounded text-[10px] text-gray-400 uppercase">源: {isHistoricalMode ? 'SINA_KLINE' : 'SINA_LIVE'}</span>
-            <span className={`bg-black/30 px-2 py-0.5 rounded text-[10px] uppercase font-bold ${isHistoricalMode ? 'text-amber-400' : 'text-green-400'}`}>{isHistoricalMode ? '● 历史' : '● 实时'}</span>
+            <span className="bg-black/30 px-2 py-0.5 rounded text-[10px] text-gray-400 uppercase flex items-center gap-1"><Terminal size={10} /> {isHistoricalMode ? 'SINA_KLINE' : 'SINA_LIVE'}</span>
+            <span className={`bg-black/30 px-2 py-0.5 rounded text-[10px] uppercase font-bold ${isHistoricalMode ? 'text-amber-400' : 'text-green-400'}`}>{isHistoricalMode ? '● 离线回溯' : '● 实时同步'}</span>
           </div>
         </div>
       </div>
 
-      {/* 市场过滤选项 */}
+      {/* 市场过滤 Tab */}
       <div className="flex gap-2 mb-4 overflow-x-auto border-b border-gray-800 no-scrollbar">
         {['ALL', 'US', 'CN', 'HK'].map(m => (
           <button key={m} onClick={() => setActiveTab(m)} className={`px-6 py-3 font-medium transition-all relative top-[1px] ${activeTab === m ? 'border-b-2 border-blue-400 text-blue-400' : 'text-gray-500 hover:text-gray-300'}`}>{m === 'ALL' ? '全球概览' : m}</button>
@@ -293,7 +294,7 @@ export default function App() {
         {loading && (
           <div className="absolute inset-0 bg-gray-900/60 backdrop-blur-[2px] z-10 flex flex-col justify-center items-center rounded-xl animate-in fade-in duration-300">
             <Loader className="animate-spin text-blue-500 mb-2" size={36} />
-            <span className="text-blue-400 text-sm font-medium tracking-widest">{isHistoricalMode ? `正在抓取 ${selectedDate} 行情...` : '正在刷新全球最新数据...'}</span>
+            <span className="text-blue-400 text-sm font-medium tracking-widest">{isHistoricalMode ? `正在抓取 ${selectedDate} 离线行情...` : '正在刷新全球最新实时数据...'}</span>
           </div>
         )}
         <StockTable stocks={hardwareStocks} type="hardware" isHistorical={isHistoricalMode} />
