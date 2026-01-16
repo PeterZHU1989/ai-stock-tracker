@@ -12,7 +12,7 @@ import random
 app = FastAPI()
 
 # 版本标识
-APP_VERSION = "2026.01.15.HISTORICAL" 
+APP_VERSION = "2026.01.15.FINAL" 
 
 app.add_middleware(
     CORSMiddleware,
@@ -22,9 +22,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- 1. 股票配置池 ---
+# --- 1. 股票配置池 (完整版：包含新增港股及所有赛道) ---
 STOCKS_CONFIG = [
-    # US
+    # ==================== 🇺🇸 美股 (US) ====================
     {"id": "NVDA", "sina_code": "gb_nvda", "ticker": "NVDA", "name": "英伟达", "market": "US", "sector": "hardware", "subSector": "GPU 芯片", "query": "NVIDIA stock news"},
     {"id": "AMD", "sina_code": "gb_amd", "ticker": "AMD", "name": "超微半导体", "market": "US", "sector": "hardware", "subSector": "GPU 芯片", "query": "AMD stock news"},
     {"id": "AVGO", "sina_code": "gb_avgo", "ticker": "AVGO", "name": "博通", "market": "US", "sector": "hardware", "subSector": "网络/ASIC", "query": "Broadcom stock news"},
@@ -32,31 +32,54 @@ STOCKS_CONFIG = [
     {"id": "TSM_US", "sina_code": "gb_tsm", "ticker": "TSM", "name": "台积电(ADR)", "market": "US", "sector": "hardware", "subSector": "晶圆代工", "query": "TSMC stock news"},
     {"id": "SMCI", "sina_code": "gb_smci", "ticker": "SMCI", "name": "超微电脑", "market": "US", "sector": "hardware", "subSector": "AI 服务器", "query": "Super Micro news"},
     {"id": "MRVL", "sina_code": "gb_mrvl", "ticker": "MRVL", "name": "Marvell", "market": "US", "sector": "hardware", "subSector": "光/电芯片", "query": "Marvell news"},
+    {"id": "APH", "sina_code": "gb_aph", "ticker": "APH", "name": "安费诺", "market": "US", "sector": "hardware", "subSector": "连接器", "query": "Amphenol stock news"},
+    {"id": "TEL", "sina_code": "gb_tel", "ticker": "TEL", "name": "泰科电子", "market": "US", "sector": "hardware", "subSector": "连接器", "query": "TE Connectivity news"},
     {"id": "TSLA", "sina_code": "gb_tsla", "ticker": "TSLA", "name": "特斯拉", "market": "US", "sector": "hardware", "subSector": "机器人/Dojo", "query": "Tesla AI news"},
     {"id": "MSFT", "sina_code": "gb_msft", "ticker": "MSFT", "name": "微软", "market": "US", "sector": "application", "subSector": "云/模型", "query": "Microsoft AI"},
     {"id": "GOOGL", "sina_code": "gb_googl", "ticker": "GOOGL", "name": "谷歌", "market": "US", "sector": "application", "subSector": "搜索/模型", "query": "Google Gemini"},
     {"id": "META", "sina_code": "gb_meta", "ticker": "META", "name": "Meta", "market": "US", "sector": "application", "subSector": "社交/模型", "query": "Llama news"},
     {"id": "APP", "sina_code": "gb_app", "ticker": "APP", "name": "AppLovin", "market": "US", "sector": "application", "subSector": "AI 营销", "query": "AppLovin news"},
     {"id": "PLTR", "sina_code": "gb_pltr", "ticker": "PLTR", "name": "Palantir", "market": "US", "sector": "application", "subSector": "数据分析", "query": "Palantir AI"},
-    # CN
+
+    # ==================== 🇨🇳 A股 (CN) ====================
     {"id": "601138", "sina_code": "sh601138", "ticker": "601138.SS", "name": "工业富联", "market": "CN", "sector": "hardware", "subSector": "AI 服务器", "query": "工业富联 新闻"},
     {"id": "300308", "sina_code": "sz300308", "ticker": "300308.SZ", "name": "中际旭创", "market": "CN", "sector": "hardware", "subSector": "光模块", "query": "中际旭创 新闻"},
     {"id": "688041", "sina_code": "sh688041", "ticker": "688041.SS", "name": "海光信息", "market": "CN", "sector": "hardware", "subSector": "AI 芯片", "query": "海光信息 新闻"},
     {"id": "688256", "sina_code": "sh688256", "ticker": "688256.SS", "name": "寒武纪", "market": "CN", "sector": "hardware", "subSector": "AI 芯片", "query": "寒武纪 新闻"},
-    # HK
+    {"id": "300394", "sina_code": "sz300394", "ticker": "300394.SZ", "name": "天孚通信", "market": "CN", "sector": "hardware", "subSector": "光器件", "query": "天孚通信 新闻"},
+    {"id": "002463", "sina_code": "sz002463", "ticker": "002463.SZ", "name": "沪电股份", "market": "CN", "sector": "hardware", "subSector": "PCB", "query": "沪电股份 新闻"},
+    {"id": "688111", "sina_code": "sh688111", "ticker": "688111.SS", "name": "金山办公", "market": "CN", "sector": "application", "subSector": "办公 AI", "query": "金山办公 新闻"},
+    {"id": "002230", "sina_code": "sz002230", "ticker": "002230.SZ", "name": "科大讯飞", "market": "CN", "sector": "application", "subSector": "语音/模型", "query": "科大讯飞 新闻"},
+
+    # ==================== 🇭🇰 港股 (HK) ====================
+    # --- 硬件 ---
     {"id": "0981", "sina_code": "rt_hk00981", "ticker": "0981.HK", "name": "中芯国际", "market": "HK", "sector": "hardware", "subSector": "晶圆代工", "query": "中芯国际 新闻"},
+    {"id": "1888", "sina_code": "rt_hk01888", "ticker": "1888.HK", "name": "建滔积层板", "market": "HK", "sector": "hardware", "subSector": "CCL 覆铜板", "query": "建滔积层板 新闻"},
     {"id": "06166", "sina_code": "rt_hk06166", "ticker": "06166.HK", "name": "剑桥科技", "market": "HK", "sector": "hardware", "subSector": "光模块(H)", "query": "剑桥科技 港股"},
+    {"id": "02577", "sina_code": "rt_hk02577", "ticker": "02577.HK", "name": "英诺赛科", "market": "HK", "sector": "hardware", "subSector": "氮化镓", "query": "英诺赛科 新闻"},
+    
+    # --- 软件/应用 ---
     {"id": "0700", "sina_code": "rt_hk00700", "ticker": "0700.HK", "name": "腾讯控股", "market": "HK", "sector": "application", "subSector": "社交/游戏", "query": "腾讯 混元"},
     {"id": "09988", "sina_code": "rt_hk09988", "ticker": "9988.HK", "name": "阿里巴巴", "market": "HK", "sector": "application", "subSector": "云/电商", "query": "阿里巴巴 阿里云"},
-    # TW
+    {"id": "01024", "sina_code": "rt_hk01024", "ticker": "1024.HK", "name": "快手", "market": "HK", "sector": "application", "subSector": "视频 AI", "query": "快手 可灵AI"},
+    {"id": "09888", "sina_code": "rt_hk09888", "ticker": "9888.HK", "name": "百度集团", "market": "HK", "sector": "application", "subSector": "搜索/驾驶", "query": "百度 文心一言"},
+    {"id": "03888", "sina_code": "rt_hk03888", "ticker": "3888.HK", "name": "金山软件", "market": "HK", "sector": "application", "subSector": "软件/游戏", "query": "金山软件 新闻"},
+    {"id": "01357", "sina_code": "rt_hk01357", "ticker": "1357.HK", "name": "美图公司", "market": "HK", "sector": "application", "subSector": "视觉 AI", "query": "美图公司 AI新闻"},
+    {"id": "09660", "sina_code": "rt_hk09660", "ticker": "9660.HK", "name": "地平线", "market": "HK", "sector": "application", "subSector": "智驾芯片", "query": "地平线 智驾 新闻"},
+    {"id": "02513", "sina_code": "rt_hk02513", "ticker": "02513.HK", "name": "智谱 AI", "market": "HK", "sector": "application", "subSector": "大模型", "query": "智谱AI 新闻"},
+    {"id": "00020", "sina_code": "rt_hk00020", "ticker": "0020.HK", "name": "商汤", "market": "HK", "sector": "application", "subSector": "视觉 AI", "query": "商汤科技 新闻"},
+
+    # ==================== 🇹🇼 台股 (TW) ====================
     {"id": "2330", "sina_code": None, "ticker": "2330.TW", "name": "台积电", "market": "TW", "sector": "hardware", "subSector": "晶圆代工", "query": "台积电 财报"},
+    {"id": "2317", "sina_code": None, "ticker": "2317.TW", "name": "鸿海", "market": "TW", "sector": "hardware", "subSector": "服务器代工", "query": "鸿海精密 鸿海AI"},
+    {"id": "2454", "sina_code": None, "ticker": "2454.TW", "name": "联发科", "market": "TW", "sector": "hardware", "subSector": "IC 设计", "query": "联发科 天玑"},
 ]
 
 # --- 2. 新闻抓取模块 ---
 NEWS_CACHE = {}
 
 def fetch_google_news_rss(query, stock_id):
-    lang_params = "&hl=zh-CN&gl=CN&ceid=CN:zh-Hans" if any(x in query for x in ["新闻", "港股", "财报"]) else "&hl=en-US&gl=US&ceid=US:en"
+    lang_params = "&hl=zh-CN&gl=CN&ceid=CN:zh-Hans" if any(x in query for x in ["新闻", "港股", "财报", "科技"]) else "&hl=en-US&gl=US&ceid=US:en"
     rss_url = f"https://news.google.com/rss/search?q={query}{lang_params}"
     try:
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
@@ -70,6 +93,7 @@ def fetch_google_news_rss(query, stock_id):
     return None
 
 def background_news_updater():
+    print(f">>> 后台新闻刷新线程启动 (Version: {APP_VERSION})...")
     while True:
         stocks = list(STOCKS_CONFIG)
         random.shuffle(stocks)
@@ -118,41 +142,31 @@ def fetch_live_data():
 
 # --- 4. 历史回溯引擎 ---
 def fetch_historical_batch(date_str):
-    """
-    抓取指定日期的收盘数据。
-    因为新浪不提供免费历史接口，历史回溯统一走 yfinance。
-    """
     tickers = [s['ticker'] for s in STOCKS_CONFIG]
     start_dt = datetime.strptime(date_str, "%Y-%m-%d")
     end_dt = start_dt + timedelta(days=1)
-    
-    # 获取目标日及前一日（计算涨跌幅需要前一日收盘价）
-    search_start = start_dt - timedelta(days=5) 
+    # 获取目标日前后几日数据以确保能计算涨幅
+    search_start = start_dt - timedelta(days=7) 
     
     results = {}
     try:
-        print(f"正在查询历史日期: {date_str} ...")
-        # 下载包含目标日期在内的一小段数据
+        print(f"[{APP_VERSION}] 查询历史日期: {date_str}")
         data = yf.download(tickers, start=search_start, end=end_dt, group_by='ticker', progress=False)
         
         for stock in STOCKS_CONFIG:
             tkr = stock['ticker']
             df = data[tkr] if len(tickers) > 1 else data
-            
-            # 过滤出目标日期当天或之前的记录
             df_target = df[df.index <= pd.Timestamp(date_str)]
+            
             if df_target.empty: continue
             
-            # 最新的一条记录即为当日收盘
             current_row = df_target.iloc[-1]
-            # 确认这条记录是否真的是我们要的那天（防止跨度太大跳到更早的日期）
+            # 检查是否休市：如果该日数据日期不匹配，说明当天没开盘
             if current_row.name.date() != start_dt.date():
-                # 如果日期不匹配，说明当天可能是休市，返回特殊标记
-                results[tkr] = {"error": True, "note": "该交易日休市"}
+                results[tkr] = {"error": True, "note": "休市"}
                 continue
                 
             close_p = float(current_row['Close'])
-            # 寻找前一个交易日的收盘价
             if len(df_target) > 1:
                 prev_close = float(df_target.iloc[-2]['Close'])
                 cp = (close_p - prev_close) / prev_close * 100
@@ -165,19 +179,23 @@ def fetch_historical_batch(date_str):
                 "historicalNote": f"当日收盘价: {round(close_p, 2)}"
             }
     except Exception as e:
-        print(f"Historical fetch error: {e}")
+        print(f"Historical Error: {e}")
     return results
 
 @app.get("/")
 def read_root():
-    return {"status": "online", "version": APP_VERSION}
+    return {
+        "status": "online", 
+        "version": APP_VERSION,
+        "stocks_count": len(STOCKS_CONFIG)
+    }
 
 @app.get("/api/stocks")
 def get_stocks(date: str = Query(None)):
     final_list = []
     
     if date:
-        # 历史回溯模式
+        # 历史模式
         hist_data = fetch_historical_batch(date)
         for stock in STOCKS_CONFIG:
             item = {**stock}
