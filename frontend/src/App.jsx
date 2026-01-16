@@ -122,10 +122,18 @@ export default function App() {
         setLoading(true);
     }
     
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000); 
+
     try {
       const url = targetDate ? `${API_BASE_URL}/api/stocks?date=${targetDate}` : `${API_BASE_URL}/api/stocks`;
-      const response = await fetch(url);
-      if (!response.ok) throw new Error("服务器响应异常");
+      const response = await fetch(url, { signal: controller.signal });
+      
+      if (!response.ok) {
+         const errBody = await response.json().catch(() => ({}));
+         throw new Error(errBody.detail || `服务器返回错误 (${response.status})`);
+      }
+
       const data = await response.json();
       
       if (Array.isArray(data)) {
@@ -133,18 +141,19 @@ export default function App() {
         setLastUpdated(new Date());
         setError(null);
       } else {
-        throw new Error("返回数据格式错误");
+        throw new Error("返回的数据格式不符合预期");
       }
     } catch (err) {
       console.error("Fetch Error:", err);
       if (targetDate) {
-        setError(`未找到 ${targetDate} 的有效数据。可能该日为非交易日或接口维护中。`);
-        setStocks([]); // 确保出错后不显示旧数据
+        setError(`未找到 ${targetDate} 的有效数据。可能该日为非交易日、数据尚未同步或后端接口异常。`);
+        setStocks([]); 
       } else if (stocks.length === 0) {
-        setError("连接后端服务失败，请检查后端运行状态。");
+        setError("连接后端服务失败，请检查后端运行状态及网络连接。");
       }
     } finally {
       setLoading(false);
+      clearTimeout(timeoutId);
     }
   }, [stocks.length]);
 
@@ -153,8 +162,9 @@ export default function App() {
     document.title = "ai-stock-tracker";
     
     if (isHistoricalMode) {
-      // 历史模式：仅抓取选定日期数据一次
+      // 历史模式：执行抓取逻辑，并确保清理掉所有定时刷新
       fetchStockData(selectedDate);
+      return () => {}; 
     } else {
       // 实时模式：执行初始抓取并启动 30 秒轮询定时器
       fetchStockData();
@@ -181,7 +191,7 @@ export default function App() {
 
   const getSentiment = () => {
     if (loading && stocks.length === 0) return "同步市场快照中...";
-    if (error) return error;
+    if (error) return "数据获取遇到障碍";
 
     const prefix = isHistoricalMode ? `📅 ${selectedDate} 复盘：` : "🚀 实时播报：";
     const hChange = parseFloat(marketStats.hardware.change);
@@ -224,12 +234,12 @@ export default function App() {
         </div>
       </div>
 
-      {/* 错误提示条 */}
+      {/* 错误提示条：增强交互，允许快速恢复 */}
       {error && isHistoricalMode && (
-          <div className="mb-6 bg-red-900/20 border border-red-800/40 p-4 rounded-xl text-red-400 text-sm flex items-center gap-3">
-              <AlertCircle size={18} />
+          <div className="mb-6 bg-red-900/20 border border-red-800/40 p-4 rounded-xl text-red-400 text-sm flex items-center gap-3 animate-pulse">
+              <AlertCircle size={18} className="flex-shrink-0" />
               <span>{error}</span>
-              <button onClick={() => setSelectedDate("")} className="ml-auto underline font-medium">切回实时模式</button>
+              <button onClick={() => setSelectedDate("")} className="ml-auto bg-red-500/20 px-3 py-1 rounded border border-red-500/50 hover:bg-red-500/40 transition-all font-medium whitespace-nowrap">重试实时模式</button>
           </div>
       )}
 
@@ -266,7 +276,7 @@ export default function App() {
           <p className="text-sm text-gray-200 leading-relaxed font-medium">{getSentiment()}</p>
           <div className="mt-3 flex gap-2">
             <span className="bg-black/30 px-2 py-0.5 rounded text-[10px] text-gray-400 uppercase">源: {isHistoricalMode ? 'SINA_KLINE' : 'SINA_LIVE'}</span>
-            <span className={`bg-black/30 px-2 py-0.5 rounded text-[10px] uppercase font-bold ${isHistoricalMode ? 'text-amber-400' : 'text-green-400'}`}>{isHistoricalMode ? '● 离线' : '● 实时'}</span>
+            <span className={`bg-black/30 px-2 py-0.5 rounded text-[10px] uppercase font-bold ${isHistoricalMode ? 'text-amber-400' : 'text-green-400'}`}>{isHistoricalMode ? '● 历史' : '● 实时'}</span>
           </div>
         </div>
       </div>
@@ -283,7 +293,7 @@ export default function App() {
         {loading && (
           <div className="absolute inset-0 bg-gray-900/60 backdrop-blur-[2px] z-10 flex flex-col justify-center items-center rounded-xl animate-in fade-in duration-300">
             <Loader className="animate-spin text-blue-500 mb-2" size={36} />
-            <span className="text-blue-400 text-sm font-medium tracking-widest">{isHistoricalMode ? '正在同步新浪历史行情...' : '正在刷新全球最新数据...'}</span>
+            <span className="text-blue-400 text-sm font-medium tracking-widest">{isHistoricalMode ? `正在抓取 ${selectedDate} 行情...` : '正在刷新全球最新数据...'}</span>
           </div>
         )}
         <StockTable stocks={hardwareStocks} type="hardware" isHistorical={isHistoricalMode} />
