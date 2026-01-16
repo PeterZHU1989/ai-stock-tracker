@@ -1,377 +1,203 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { Monitor, Cpu, TrendingUp, TrendingDown, Globe, Activity, RefreshCw, Smartphone, Zap, Server, Loader, AlertCircle, Info, ExternalLink, Newspaper } from 'lucide-react';
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+import requests
+import yfinance as yf
+import threading
+import time
+import xml.etree.ElementTree as ET
+from datetime import datetime
+import random
 
-// --- 配置 API 地址 ---
-// 智能判断：如果是本地开发(localhost)，使用本地后端；如果是云端部署，使用环境变量 VITE_API_URL
-// 如果没有设置环境变量，默认为本地地址
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+app = FastAPI()
 
-// 样式组件
-const Card = ({ children, className = "" }) => (
-  <div className={`bg-gray-800 rounded-xl border border-gray-700 shadow-lg ${className}`}>
-    {children}
-  </div>
-);
+# 版本标识，用于确认部署是否生效
+APP_VERSION = "2026.01.15.V2" 
 
-const Badge = ({ children, type }) => {
-  const colors = {
-    US: "bg-blue-900 text-blue-200 border-blue-700",
-    CN: "bg-red-900 text-red-200 border-red-700",
-    HK: "bg-purple-900 text-purple-200 border-purple-700",
-    TW: "bg-green-900 text-green-200 border-green-700",
-    hardware: "bg-cyan-900 text-cyan-200 border-cyan-700",
-    application: "bg-orange-900 text-orange-200 border-orange-700"
-  };
-  return (
-    <span className={`px-2 py-0.5 text-xs font-medium rounded border ${colors[type] || "bg-gray-700"}`}>
-      {children}
-    </span>
-  );
-};
+# 允许跨域
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-// 股票表格组件
-const StockTable = ({ stocks, type }) => {
-  const isHardware = type === 'hardware';
-  const themeColor = isHardware ? 'text-cyan-400' : 'text-orange-400';
-  const themeBg = isHardware ? 'bg-cyan-900/30' : 'bg-orange-900/30';
-  const themeBorder = isHardware ? 'border-cyan-700' : 'border-orange-700';
+# --- 1. 股票配置池 (已确认：港股已移除联想/小米，新增剑桥/英诺/阿里/快手等) ---
+STOCKS_CONFIG = [
+    # ==================== 🇺🇸 美股 (US) ====================
+    {"id": "NVDA", "sina_code": "gb_nvda", "ticker": "NVDA", "name": "英伟达", "market": "US", "sector": "hardware", "subSector": "GPU 芯片", "query": "NVIDIA stock news"},
+    {"id": "AMD", "sina_code": "gb_amd", "ticker": "AMD", "name": "超微半导体", "market": "US", "sector": "hardware", "subSector": "GPU 芯片", "query": "AMD stock news"},
+    {"id": "AVGO", "sina_code": "gb_avgo", "ticker": "AVGO", "name": "博通", "market": "US", "sector": "hardware", "subSector": "网络/ASIC", "query": "Broadcom stock news"},
+    {"id": "MU", "sina_code": "gb_mu", "ticker": "MU", "name": "镁光科技", "market": "US", "sector": "hardware", "subSector": "HBM 存储", "query": "Micron Technology news"},
+    {"id": "TSM_US", "sina_code": "gb_tsm", "ticker": "TSM", "name": "台积电(ADR)", "market": "US", "sector": "hardware", "subSector": "晶圆代工", "query": "TSMC stock news"},
+    {"id": "SMCI", "sina_code": "gb_smci", "ticker": "SMCI", "name": "超微电脑", "market": "US", "sector": "hardware", "subSector": "AI 服务器", "query": "Super Micro news"},
+    {"id": "MRVL", "sina_code": "gb_mrvl", "ticker": "MRVL", "name": "Marvell", "market": "US", "sector": "hardware", "subSector": "光/电芯片", "query": "Marvell Technology news"},
+    {"id": "APH", "sina_code": "gb_aph", "ticker": "APH", "name": "安费诺", "market": "US", "sector": "hardware", "subSector": "连接器", "query": "Amphenol stock news"},
+    {"id": "TEL", "sina_code": "gb_tel", "ticker": "TEL", "name": "泰科电子", "market": "US", "sector": "hardware", "subSector": "连接器", "query": "TE Connectivity news"},
+    {"id": "COHR", "sina_code": "gb_cohr", "ticker": "COHR", "name": "Coherent", "market": "US", "sector": "hardware", "subSector": "光电子", "query": "Coherent stock news"},
+    {"id": "TSLA", "sina_code": "gb_tsla", "ticker": "TSLA", "name": "特斯拉", "market": "US", "sector": "hardware", "subSector": "机器人/Dojo", "query": "Tesla AI news"},
+    {"id": "MSFT", "sina_code": "gb_msft", "ticker": "MSFT", "name": "微软", "market": "US", "sector": "application", "subSector": "云/模型", "query": "Microsoft AI news"},
+    {"id": "GOOGL", "sina_code": "gb_googl", "ticker": "GOOGL", "name": "谷歌", "market": "US", "sector": "application", "subSector": "搜索/模型", "query": "Google Gemini news"},
+    {"id": "META", "sina_code": "gb_meta", "ticker": "META", "name": "Meta", "market": "US", "sector": "application", "subSector": "社交/模型", "query": "Meta Llama news"},
+    {"id": "APP", "sina_code": "gb_app", "ticker": "APP", "name": "AppLovin", "market": "US", "sector": "application", "subSector": "AI 营销", "query": "AppLovin stock news"},
+    {"id": "CRM", "sina_code": "gb_crm", "ticker": "CRM", "name": "Salesforce", "market": "US", "sector": "application", "subSector": "企业 AI", "query": "Salesforce AI news"},
+    {"id": "PLTR", "sina_code": "gb_pltr", "ticker": "PLTR", "name": "Palantir", "market": "US", "sector": "application", "subSector": "数据分析", "query": "Palantir stock news"},
 
-  return (
-    <div className="mb-8 animate-fade-in">
-      {/* 分类标题 */}
-      <div className="flex items-center gap-3 mb-4 pl-1">
-        <div className={`p-2 rounded-lg ${themeBg} ${themeColor} border ${themeBorder} shadow-sm`}>
-          {isHardware ? <Server size={20} /> : <Zap size={20} />}
-        </div>
-        <div>
-          <h2 className="text-xl font-bold text-gray-100 flex items-center gap-2">
-            {isHardware ? 'AI 硬件端' : 'AI 应用端'}
-          </h2>
-          <p className="text-xs text-gray-500 font-medium mt-0.5">
-            {isHardware ? 'Infrastructure: 芯片 / 算力 / 光通信 / PCB / 电源' : 'Applications: 模型 / 软件 / 互联网 / 终端'}
-          </p>
-        </div>
-      </div>
+    # ==================== 🇨🇳 A股 (CN) ====================
+    {"id": "601138", "sina_code": "sh601138", "ticker": "601138.SS", "name": "工业富联", "market": "CN", "sector": "hardware", "subSector": "AI 服务器", "query": "工业富联 新闻"},
+    {"id": "300308", "sina_code": "sz300308", "ticker": "300308.SZ", "name": "中际旭创", "market": "CN", "sector": "hardware", "subSector": "光模块", "query": "中际旭创 新闻"},
+    {"id": "688041", "sina_code": "sh688041", "ticker": "688041.SS", "name": "海光信息", "market": "CN", "sector": "hardware", "subSector": "AI 芯片", "query": "海光信息 新闻"},
+    {"id": "688256", "sina_code": "sh688256", "ticker": "688256.SS", "name": "寒武纪", "market": "CN", "sector": "hardware", "subSector": "AI 芯片", "query": "寒武纪 新闻"},
+    {"id": "300394", "sina_code": "sz300394", "ticker": "300394.SZ", "name": "天孚通信", "market": "CN", "sector": "hardware", "subSector": "光器件", "query": "天孚通信 新闻"},
+    {"id": "688498", "sina_code": "sh688498", "ticker": "688498.SS", "name": "源杰科技", "market": "CN", "sector": "hardware", "subSector": "光芯片", "query": "源杰科技 新闻"},
+    {"id": "002463", "sina_code": "sz002463", "ticker": "002463.SZ", "name": "沪电股份", "market": "CN", "sector": "hardware", "subSector": "PCB", "query": "沪电股份 新闻"},
+    {"id": "300476", "sina_code": "sz300476", "ticker": "300476.SZ", "name": "胜宏科技", "market": "CN", "sector": "hardware", "subSector": "PCB", "query": "胜宏科技 新闻"},
+    {"id": "002938", "sina_code": "sz002938", "ticker": "002938.SZ", "name": "鹏鼎控股", "market": "CN", "sector": "hardware", "subSector": "PCB", "query": "鹏鼎控股 新闻"},
+    {"id": "002837", "sina_code": "sz002837", "ticker": "002837.SZ", "name": "英维克", "market": "CN", "sector": "hardware", "subSector": "液冷温控", "query": "英维克 新闻"},
+    {"id": "688668", "sina_code": "sh688668", "ticker": "688668.SS", "name": "鼎通科技", "market": "CN", "sector": "hardware", "subSector": "连接器", "query": "鼎通科技 新闻"},
+    {"id": "002851", "sina_code": "sz002851", "ticker": "002851.SZ", "name": "麦格米特", "market": "CN", "sector": "hardware", "subSector": "AI 电源", "query": "麦格米特 新闻"},
+    {"id": "688111", "sina_code": "sh688111", "ticker": "688111.SS", "name": "金山办公", "market": "CN", "sector": "application", "subSector": "办公 AI", "query": "金山办公 新闻"},
+    {"id": "002230", "sina_code": "sz002230", "ticker": "002230.SZ", "name": "科大讯飞", "market": "CN", "sector": "application", "subSector": "语音/模型", "query": "科大讯飞 新闻"},
+    {"id": "600588", "sina_code": "sh600588", "ticker": "600588.SS", "name": "用友网络", "market": "CN", "sector": "application", "subSector": "企业 AI", "query": "用友网络 新闻"},
 
-      {/* 表格主体 */}
-      <div className="bg-gray-800 rounded-xl border border-gray-700 shadow-lg overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm text-gray-400">
-            <thead className="bg-gray-900/50 text-gray-300 uppercase font-medium">
-              <tr>
-                <th className="px-6 py-4 w-32">代码/名称</th>
-                <th className="px-6 py-4 w-24">市场</th>
-                <th className="px-6 py-4 w-32">赛道细分</th>
-                <th className="px-6 py-4 w-28 text-right">最新价</th>
-                <th className="px-6 py-4 w-28 text-right">涨跌额</th>
-                <th className="px-6 py-4 w-28 text-right">涨跌幅</th>
-                <th className="px-6 py-4">Google News 实时热点</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-700">
-              {(!stocks || stocks.length === 0) ? (
-                 <tr><td colSpan="7" className="px-6 py-8 text-center text-gray-500">正在同步数据...</td></tr>
-              ) : (
-                stocks.map((stock) => (
-                    <tr key={stock.id} className="hover:bg-gray-750 transition-colors group">
-                    <td className="px-6 py-4">
-                        <div className="flex flex-col">
-                        <span className="text-white font-bold text-base">{stock.name}</span>
-                        <span className="text-xs font-mono text-gray-500 group-hover:text-blue-400 transition-colors">{stock.ticker}</span>
-                        </div>
-                    </td>
-                    <td className="px-6 py-4">
-                        <Badge type={stock.market}>{stock.market}</Badge>
-                    </td>
-                    <td className="px-6 py-4">
-                        <span className="text-xs text-gray-300 bg-gray-700/50 px-2 py-1 rounded border border-gray-600 whitespace-nowrap">
-                            {stock.subSector}
-                        </span>
-                    </td>
-                    <td className="px-6 py-4 text-right">
-                        <div className="font-mono text-white text-base font-medium tracking-tight">
-                            {stock.error ? <span className="text-red-500 text-xs">暂无</span> : stock.currentPrice}
-                        </div>
-                    </td>
-                    <td className={`px-6 py-4 text-right font-mono ${stock.changeAmount >= 0 ? 'text-red-400' : 'text-green-400'}`}>
-                        {stock.changeAmount > 0 ? '+' : ''}{parseFloat(stock.changeAmount || 0).toFixed(2)}
-                    </td>
-                    <td className="px-6 py-4 text-right">
-                        {stock.error ? (
-                            <span className="text-gray-600">-</span>
-                        ) : (
-                            <div className={`font-mono font-bold ${stock.changePercent >= 0 ? 'text-red-400' : 'text-green-400'}`}>
-                            {stock.changePercent >= 0 ? '+' : ''}{stock.changePercent?.toFixed(2)}%
-                            </div>
-                        )}
-                    </td>
-                    {/* 新闻展示区域 */}
-                    <td className="px-6 py-4 align-top">
-                        {stock.news && stock.news.title !== "正在获取最新资讯..." ? (
-                            <a 
-                                href={stock.news.link} 
-                                target="_blank" 
-                                rel="noopener noreferrer"
-                                className="flex items-start gap-2 p-2 rounded bg-gray-700/30 border border-gray-700/50 hover:bg-gray-700 hover:border-blue-500/50 transition-all group/news"
-                            >
-                                <Newspaper size={14} className="text-blue-400 mt-0.5 flex-shrink-0 group-hover/news:text-blue-300" />
-                                <div>
-                                    <span className="text-xs text-gray-200 leading-relaxed font-medium line-clamp-2 hover:underline">
-                                        {stock.news.title}
-                                    </span>
-                                    <div className="flex items-center gap-1 mt-1 text-[10px] text-gray-500">
-                                        Google News <ExternalLink size={8} />
-                                    </div>
-                                </div>
-                            </a>
-                        ) : (
-                            <div className="flex items-center gap-2 text-xs text-gray-600 italic">
-                                <Loader size={12} className="animate-spin" />
-                                正在抓取新闻...
-                            </div>
-                        )}
-                    </td>
-                    </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-
-export default function AIMarketTracker() {
-  const [stocks, setStocks] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [activeTab, setActiveTab] = useState('ALL'); 
-  const [lastUpdated, setLastUpdated] = useState(null);
-
-  // --- 核心：从后端获取真实数据 ---
-  const fetchStockData = async () => {
-    // 首次加载显示 Loading，后续静默更新
-    if (stocks.length === 0) setLoading(true);
+    # ==================== 🇭🇰 港股 (HK) ====================
+    # --- 硬件 ---
+    {"id": "0981", "sina_code": "rt_hk00981", "ticker": "0981.HK", "name": "中芯国际", "market": "HK", "sector": "hardware", "subSector": "晶圆代工", "query": "中芯国际 新闻"},
+    {"id": "1888", "sina_code": "rt_hk01888", "ticker": "1888.HK", "name": "建滔积层板", "market": "HK", "sector": "hardware", "subSector": "CCL 覆铜板", "query": "建滔积层板 新闻"},
+    {"id": "06166", "sina_code": "rt_hk06166", "ticker": "06166.HK", "name": "剑桥科技", "market": "HK", "sector": "hardware", "subSector": "光模块(H)", "query": "剑桥科技 港股 新闻"},
+    {"id": "02577", "sina_code": "rt_hk02577", "ticker": "02577.HK", "name": "英诺赛科", "market": "HK", "sector": "hardware", "subSector": "氮化镓", "query": "英诺赛科 新闻"},
     
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000); // 云端可能稍慢，给15秒
+    # --- 软件/应用 ---
+    {"id": "0700", "sina_code": "rt_hk00700", "ticker": "0700.HK", "name": "腾讯控股", "market": "HK", "sector": "application", "subSector": "社交/游戏", "query": "腾讯 混元大模型 新闻"},
+    {"id": "09988", "sina_code": "rt_hk09988", "ticker": "9988.HK", "name": "阿里巴巴", "market": "HK", "sector": "application", "subSector": "云/电商", "query": "阿里巴巴 阿里云 新闻"},
+    {"id": "01024", "sina_code": "rt_hk01024", "ticker": "1024.HK", "name": "快手", "market": "HK", "sector": "application", "subSector": "视频 AI", "query": "快手 可灵AI 新闻"},
+    {"id": "09888", "sina_code": "rt_hk09888", "ticker": "9888.HK", "name": "百度集团", "market": "HK", "sector": "application", "subSector": "搜索/驾驶", "query": "百度 文心一言 新闻"},
+    {"id": "03888", "sina_code": "rt_hk03888", "ticker": "3888.HK", "name": "金山软件", "market": "HK", "sector": "application", "subSector": "软件/游戏", "query": "金山软件 新闻"},
+    {"id": "01357", "sina_code": "rt_hk01357", "ticker": "1357.HK", "name": "美图公司", "market": "HK", "sector": "application", "subSector": "视觉 AI", "query": "美图公司 AI新闻"},
+    {"id": "09660", "sina_code": "rt_hk09660", "ticker": "9660.HK", "name": "地平线", "market": "HK", "sector": "application", "subSector": "智驾芯片", "query": "地平线 机器人 新闻"},
+    {"id": "02513", "sina_code": "rt_hk02513", "ticker": "02513.HK", "name": "智谱 AI", "market": "HK", "sector": "application", "subSector": "大模型", "query": "智谱AI 新闻"},
+    {"id": "00020", "sina_code": "rt_hk00020", "ticker": "0020.HK", "name": "商汤", "market": "HK", "sector": "application", "subSector": "视觉 AI", "query": "商汤科技 新闻"},
 
-    try {
-      // 使用动态配置的 API 地址
-      const response = await fetch(`${API_BASE_URL}/api/stocks`, {
-        signal: controller.signal
-      });
-      clearTimeout(timeoutId);
+    # ==================== 🇹🇼 台股 (TW) ====================
+    {"id": "2330", "sina_code": None, "ticker": "2330.TW", "name": "台积电", "market": "TW", "sector": "hardware", "subSector": "晶圆代工", "query": "台积电 财报 新闻"},
+    {"id": "2317", "sina_code": None, "ticker": "2317.TW", "name": "鸿海", "market": "TW", "sector": "hardware", "subSector": "代工/服务器", "query": "鸿海精密 鸿海AI 新闻"},
+    {"id": "2454", "sina_code": None, "ticker": "2454.TW", "name": "联发科", "market": "TW", "sector": "hardware", "subSector": "IC 设计", "query": "联发科 天玑 新闻"},
+    {"id": "2382", "sina_code": None, "ticker": "2382.TW", "name": "广达", "market": "TW", "sector": "hardware", "subSector": "AI 服务器", "query": "广达电脑 新闻"},
+    {"id": "6669", "sina_code": None, "ticker": "6669.TW", "name": "纬颖", "market": "TW", "sector": "hardware", "subSector": "云端服务器", "query": "纬颖科技 新闻"},
+]
 
-      if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
-      
-      const data = await response.json();
-      
-      if (Array.isArray(data)) {
-        setStocks(data);
-        setLastUpdated(new Date());
-        setError(null);
-      } else {
-        throw new Error("无效的数据格式");
-      }
-    } catch (err) {
-      console.error("Fetch error:", err);
-      if (stocks.length === 0) {
-          setError(`连接失败: ${err.message}。请检查后端服务是否正常。`);
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
+# --- 2. 新闻抓取模块 ---
+NEWS_CACHE = {}
 
-  useEffect(() => {
-    fetchStockData();
-    // 30秒刷新一次数据
-    const intervalId = setInterval(fetchStockData, 30000); 
-    return () => clearInterval(intervalId);
-  }, []);
+def fetch_google_news_rss(query, stock_id):
+    if any(keyword in query for keyword in ["新闻", "港股", "财报"]):
+        rss_url = f"https://news.google.com/rss/search?q={query}&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
+    else:
+        rss_url = f"https://news.google.com/rss/search?q={query}&hl=en-US&gl=US&ceid=US:en"
+    try:
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        resp = requests.get(rss_url, headers=headers, timeout=8)
+        if resp.status_code == 200:
+            root = ET.fromstring(resp.content)
+            item = root.find(".//item")
+            if item is not None:
+                title = item.find("title").text
+                link = item.find("link").text
+                clean_title = title.split(" - ")[0]
+                return {"title": clean_title, "link": link}
+    except Exception as e:
+        print(f"[{stock_id}] News Fetch Error: {e}")
+    return None
 
-  const marketStats = useMemo(() => {
-    const calculateIndex = (filterFn) => {
-      const filtered = stocks.filter(filterFn).filter(s => !s.error); 
-      if (filtered.length === 0) return { val: 1000, change: 0 };
-      
-      const totalChange = filtered.reduce((acc, s) => acc + (s.changePercent || 0), 0);
-      const avgChange = (totalChange / filtered.length).toFixed(2);
-      const baseVal = 1000;
-      const currentVal = (baseVal * (1 + avgChange/100)).toFixed(1);
+def background_news_updater():
+    print(f">>> 后台新闻抓取线程启动 (版本: {APP_VERSION})...")
+    while True:
+        stocks = list(STOCKS_CONFIG)
+        random.shuffle(stocks)
+        for stock in stocks:
+            news = fetch_google_news_rss(stock["query"], stock["id"])
+            if news:
+                NEWS_CACHE[stock["id"]] = news
+            time.sleep(3) 
+        print(f"[{datetime.now().strftime('%H:%M')}] 全量新闻缓存已刷新，休眠 20 分钟...")
+        time.sleep(1200)
 
-      return { val: currentVal, change: avgChange };
-    };
+t = threading.Thread(target=background_news_updater, daemon=True)
+t.start()
 
+# --- 3. 行情数据获取 ---
+def fetch_sina_batch():
+    sina_stocks = [s for s in STOCKS_CONFIG if s['sina_code']]
+    codes = ",".join([s['sina_code'] for s in sina_stocks])
+    url = f"http://hq.sinajs.cn/list={codes}"
+    headers = {"Referer": "http://finance.sina.com.cn/"}
+    results = {}
+    try:
+        resp = requests.get(url, headers=headers, timeout=5)
+        content = resp.content.decode('gbk')
+        for line in content.splitlines():
+            if not line or "=" not in line: continue
+            try:
+                code_part, data_part = line.split('=')
+                code = code_part.split('_str_')[-1]
+                data = data_part.strip('";').split(',')
+                if len(data) < 5: continue
+                price, change_p, change_a = 0.0, 0.0, 0.0
+                if code.startswith('gb_'): 
+                    price, change_p, change_a = float(data[1]), float(data[2]), float(data[4])
+                elif code.startswith('rt_hk'): 
+                    price, prev = float(data[6]), float(data[3])
+                    change_a = price - prev
+                    change_p = (change_a / prev * 100) if prev else 0
+                else: 
+                    price, prev = float(data[3]), float(data[2])
+                    change_a = price - prev
+                    change_p = (change_a / prev * 100) if prev else 0
+                results[code] = {"currentPrice": round(price, 2), "changePercent": round(change_p, 2), "changeAmount": round(change_a, 2)}
+            except: continue
+    except: pass
+    return results
+
+def fetch_yahoo_tw():
+    tw_stocks = [s for s in STOCKS_CONFIG if not s['sina_code']]
+    tickers = [s['ticker'] for s in tw_stocks]
+    results = {}
+    try:
+        data = yf.download(tickers, period="2d", interval="1d", group_by='ticker', threads=True, progress=False)
+        for stock in tw_stocks:
+            ticker = stock['ticker']
+            try:
+                df = data if len(tickers) == 1 else data[ticker]
+                if df.empty: continue
+                price = float(df['Close'].iloc[-1])
+                prev = float(df['Close'].iloc[-2]) if len(df) > 1 else price
+                results[ticker] = {"currentPrice": round(price, 2), "changePercent": round(((price-prev)/prev)*100, 2), "changeAmount": round(price-prev, 2)}
+            except: pass
+    except: pass
+    return results
+
+@app.get("/")
+def read_root():
     return {
-      hardware: calculateIndex(s => s.sector === 'hardware'),
-      application: calculateIndex(s => s.sector === 'application'),
-    };
-  }, [stocks]);
+        "status": "online", 
+        "version": APP_VERSION, 
+        "stocks_count": len(STOCKS_CONFIG),
+        "cached_news": len(NEWS_CACHE)
+    }
 
-  const stocksInMarket = activeTab === 'ALL' 
-    ? stocks 
-    : stocks.filter(s => s.market === activeTab);
-  
-  const hardwareStocks = stocksInMarket.filter(s => s.sector === 'hardware');
-  const applicationStocks = stocksInMarket.filter(s => s.sector === 'application');
-
-  const getSentiment = () => {
-    if (loading && stocks.length === 0) return "正在从新浪财经同步数据...";
-    if (error) return "数据源连接中断。";
-    
-    const hChange = parseFloat(marketStats.hardware.change);
-    const aChange = parseFloat(marketStats.application.change);
-    
-    if (hChange > 0.5 && aChange > 0.5) return "🔥 情绪高涨：今日资金全面流入 AI 板块。";
-    if (hChange < -0.5 && aChange < -0.5) return "❄️ 避险情绪：受宏观影响，AI 产业链普遍回调。";
-    if (hChange > 0.5) return "⚙️ 硬强软弱：资金聚焦算力基建，应用端相对疲软。";
-    if (aChange > 0.5) return "📱 软强硬弱：硬件端获利了结，资金切换至应用股。";
-    return "⚖️ 窄幅震荡：市场缺乏明确方向。";
-  };
-
-  return (
-    <div className="min-h-screen bg-gray-900 text-gray-100 font-sans p-4 md:p-8">
-      {/* Header */}
-      <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
-        <div>
-          <h1 className="text-2xl md:text-3xl font-bold flex items-center gap-3 text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-400">
-            <Globe className="w-8 h-8 text-blue-400" />
-            全球 AI 股市追踪
-          </h1>
-          <p className="text-gray-400 text-sm mt-1">
-            实时追踪 US / CN / HK / TW 四大市场 AI 产业链 (Sina Finance + Google News)
-          </p>
-        </div>
-        
-        <div className="flex items-center gap-3">
-            {error ? (
-                <div className="flex items-center gap-2 text-red-400 text-sm border border-red-800 px-3 py-1 rounded-full bg-red-900/20">
-                    <AlertCircle className="w-4 h-4"/> {error}
-                </div>
-            ) : (
-                <div className="flex items-center gap-3 bg-gray-800 px-4 py-2 rounded-full border border-gray-700">
-                    <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-                    <span className="text-xs text-gray-400 font-mono">
-                        {lastUpdated ? lastUpdated.toLocaleTimeString() : '--:--:--'}
-                    </span>
-                    <button onClick={() => {fetchStockData();}} className="hover:text-white transition-colors" title="刷新">
-                        <RefreshCw className={`w-3 h-3 text-gray-500 ${loading ? 'animate-spin' : ''}`} />
-                    </button>
-                </div>
-            )}
-        </div>
-      </div>
-
-      {/* 市场概览卡片 */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-        <Card className="p-5 relative overflow-hidden group">
-          <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
-            <Cpu size={80} />
-          </div>
-          <div className="flex items-center gap-2 mb-2">
-            <Cpu className="text-cyan-400 w-5 h-5" />
-            <h3 className="text-gray-400 font-medium">AI 硬件/基建指数</h3>
-          </div>
-          <div className="flex items-baseline gap-3">
-            <span className="text-3xl font-bold">{marketStats.hardware.val}</span>
-            <span className={`text-lg font-medium flex items-center ${marketStats.hardware.change >= 0 ? 'text-red-400' : 'text-green-400'}`}>
-              {marketStats.hardware.change >= 0 ? <TrendingUp size={18} className="mr-1"/> : <TrendingDown size={18} className="mr-1"/>}
-              {marketStats.hardware.change}%
-            </span>
-          </div>
-          <div className="mt-4 h-1 w-full bg-gray-700 rounded-full overflow-hidden">
-            <div 
-              className={`h-full ${marketStats.hardware.change >= 0 ? 'bg-red-500' : 'bg-green-500'}`} 
-              style={{ width: `${Math.min(Math.abs(marketStats.hardware.change) * 20, 100)}%` }}
-            ></div>
-          </div>
-        </Card>
-
-        <Card className="p-5 relative overflow-hidden group">
-          <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
-            <Smartphone size={80} />
-          </div>
-          <div className="flex items-center gap-2 mb-2">
-            <Zap className="text-orange-400 w-5 h-5" />
-            <h3 className="text-gray-400 font-medium">AI 应用/软件指数</h3>
-          </div>
-          <div className="flex items-baseline gap-3">
-            <span className="text-3xl font-bold">{marketStats.application.val}</span>
-            <span className={`text-lg font-medium flex items-center ${marketStats.application.change >= 0 ? 'text-red-400' : 'text-green-400'}`}>
-              {marketStats.application.change >= 0 ? <TrendingUp size={18} className="mr-1"/> : <TrendingDown size={18} className="mr-1"/>}
-              {marketStats.application.change}%
-            </span>
-          </div>
-          <div className="mt-4 h-1 w-full bg-gray-700 rounded-full overflow-hidden">
-            <div 
-              className={`h-full ${marketStats.application.change >= 0 ? 'bg-red-500' : 'bg-green-500'}`} 
-              style={{ width: `${Math.min(Math.abs(marketStats.application.change) * 20, 100)}%` }}
-            ></div>
-          </div>
-        </Card>
-
-        <Card className="p-5 bg-gradient-to-br from-indigo-900 to-gray-800 border-indigo-700">
-          <div className="flex items-center gap-2 mb-3">
-            <Activity className="text-indigo-400 w-5 h-5" />
-            <h3 className="text-indigo-200 font-medium">AI 市场风向标</h3>
-          </div>
-          <p className="text-gray-300 text-sm leading-relaxed mb-4">
-            {getSentiment()}
-          </p>
-          <div className="flex gap-2">
-            <div className="bg-black/30 px-3 py-1 rounded text-xs text-gray-400">
-              数据源: <span className="text-white">新浪财经</span>
-            </div>
-            <div className="bg-black/30 px-3 py-1 rounded text-xs text-gray-400">
-              状态: <span className="text-green-400">● 实时同步</span>
-            </div>
-          </div>
-        </Card>
-      </div>
-
-      {/* 市场筛选 Tab */}
-      <div className="flex flex-col gap-4">
-        <div className="flex gap-2 overflow-x-auto pb-2 border-b border-gray-700 mb-4">
-          {['ALL', 'US', 'CN', 'HK', 'TW'].map(market => (
-            <button
-              key={market}
-              onClick={() => setActiveTab(market)}
-              className={`px-6 py-3 rounded-t-lg font-medium transition-all whitespace-nowrap relative top-[1px] ${
-                activeTab === market 
-                ? 'bg-gray-800 text-blue-400 border-t border-l border-r border-gray-700' 
-                : 'text-gray-400 hover:text-white'
-              }`}
-            >
-              {market === 'ALL' ? '全球概览' : 
-               market === 'US' ? '🇺🇸 美股' :
-               market === 'CN' ? '🇨🇳 A股' :
-               market === 'HK' ? '🇭🇰 港股' : '🇹🇼 台股'}
-            </button>
-          ))}
-        </div>
-
-        {/* 股票列表区域 */}
-        {loading && stocks.length === 0 ? (
-            <div className="flex justify-center items-center py-20">
-                <Loader className="w-10 h-10 text-blue-500 animate-spin" />
-            </div>
-        ) : (
-            <div className="animate-fade-in">
-                <StockTable stocks={hardwareStocks} type="hardware" />
-                {/* 台湾板块特例：仅展示硬件 */}
-                {activeTab !== 'TW' && <StockTable stocks={applicationStocks} type="application" />}
-            </div>
-        )}
-        
-      </div>
-      
-      <div className="mt-8 text-center text-gray-600 text-sm pb-8">
-        <p>© 2026 AI Market Tracker | Power by Sina Finance & Google News</p>
-      </div>
-    </div>
-  );
-}
+@app.get("/api/stocks")
+def get_stocks():
+    sina_data, yahoo_data = {}, {}
+    def run_s(): nonlocal sina_data; sina_data = fetch_sina_batch()
+    def run_y(): nonlocal yahoo_data; yahoo_data = fetch_yahoo_tw()
+    t1 = threading.Thread(target=run_s); t2 = threading.Thread(target=run_y)
+    t1.start(); t2.start(); t1.join(); t2.join()
+    final_list = []
+    for stock in STOCKS_CONFIG:
+        item = {**stock}
+        m_data = sina_data.get(stock['sina_code']) if stock['sina_code'] else yahoo_data.get(stock['ticker'])
+        if m_data: item.update(m_data)
+        else: item.update({"currentPrice": "-", "changePercent": 0, "changeAmount": 0, "error": True})
+        item["news"] = NEWS_CACHE.get(stock["id"], {"title": "正在同步最新热点...", "link": "#"})
+        final_list.append(item)
+    return final_list
